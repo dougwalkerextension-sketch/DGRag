@@ -10,6 +10,7 @@ import app
 def raw(ebook_id='2147', text=None):
     return (f'Title: The Works of Edgar Allan Poe\n[eBook #{ebook_id}]\n'
             '*** START OF THE PROJECT GUTENBERG EBOOK POE ***\n\n'
+            + ('' if text and text.startswith('Contents') else 'Contents\n\n THE TEST TALE\n\n\nTHE TEST TALE\n\n')
             + (text or 'A tale of memory, mystery, guilt, and imagination. ' * 100)
             + '\n\n*** END OF THE PROJECT GUTENBERG EBOOK POE ***\nLICENSE FOOTER')
 
@@ -32,6 +33,7 @@ class PipelineTests(unittest.TestCase):
         self.original = copy.deepcopy(app.STATE)
         app.STATE.update(documents=[], chunks=[], events=[], runs=[], answers=[], active_namespace='previous')
         app.STATE.update(active_corpus=app.CORPUS, active_source_urls=list(app.SOURCES))
+        app.STATE['active_works'] = []
         self.persistence = patch('app.persist')
         self.persistence.start()
 
@@ -53,7 +55,7 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn('LICENSE FOOTER', doc['text'])
         self.assertNotIn('START OF', doc['text'])
         self.assertNotIn('[eBook', doc['text'])
-        self.assertTrue(doc['text'].startswith('A tale'))
+        self.assertIn('A tale', doc['text'])
         self.assertEqual(doc['author'], 'Edgar Allan Poe')
         self.assertEqual(len(doc['sha256']), 64)
 
@@ -64,13 +66,13 @@ class PipelineTests(unittest.TestCase):
 
     def test_chunks_preserve_overlap_offsets_and_stable_ids(self):
         docs = app.validate_import([record()])
-        chunks = app.chunk_documents(docs)
+        chunks = [chunk for chunk in app.chunk_documents(docs) if chunk['work_type'] == 'literary-work']
         self.assertEqual(chunks[0]['text'][1800:], chunks[1]['text'][:300])
         self.assertEqual(chunks[0]['url'], docs[0]['url'])
         for chunk in chunks:
             self.assertEqual(chunk['text'], docs[0]['text'][chunk['char_start']:chunk['char_end']])
             self.assertEqual(chunk['ebook_id'], '2147')
-        self.assertEqual(chunks, app.chunk_documents(docs))
+        self.assertEqual(chunks, [c for c in app.chunk_documents(docs) if c['work_type'] == 'literary-work'])
 
     def test_fetch_downloads_only_the_three_configured_sources_and_caches_them(self):
         with TemporaryDirectory() as directory, patch('app.DATA', Path(directory)), patch('app.requests.get') as get:
@@ -189,6 +191,52 @@ class PipelineTests(unittest.TestCase):
         self.assertIn('intended effect', messages[0]['content'])
         self.assertEqual(pc.call_args_list[0].args[1]['filter'], {'url': {'$eq': app.ESSAY_URL}})
         self.assertEqual(pc.call_args_list[1].args[1]['topK'], 6)
+        self.assertEqual(pc.call_args_list[1].args[1]['filter'], {'work_type': {'$eq': 'literary-work'}})
+
+    def test_chunks_never_cross_work_boundaries_and_exclude_contents_from_tales(self):
+        body = ('Contents\n\n FIRST TALE\n SECOND TALE\n NOTES TO THE SECOND VOLUME\n\n'
+                'FIRST TALE\n\n' + 'First narrator. ' * 170 + '\n\nSECOND TALE\n\n'
+                + 'Second narrator. ' * 170 + '\n\nNOTES TO THE SECOND VOLUME\nEditorial note.')
+        docs = app.validate_import([{'url': record()['url'], 'text': raw(text=body)}])
+        chunks = app.chunk_documents(docs)
+        stories = [c for c in chunks if c['work_type'] == 'literary-work']
+        self.assertEqual(set(c['work_title'] for c in stories), {'FIRST TALE', 'SECOND TALE'})
+        for chunk in stories:
+            self.assertNotIn('Contents', chunk['text'])
+            self.assertNotIn('Editorial note', chunk['text'])
+            self.assertFalse('First narrator' in chunk['text'] and 'Second narrator' in chunk['text'])
+            self.assertEqual(chunk['text'], docs[0]['text'][chunk['char_start']:chunk['char_end']])
+        self.assertEqual(len(app.work_catalog(chunks)), 2)
+
+    def test_work_selection_uses_current_title_then_recent_user_context(self):
+        from poe_sources import mentioned_works
+        catalog = [{'work_title': 'THE BLACK CAT'}, {'work_title': 'THE TELL-TALE HEART'}]
+        history = [{'role': 'user', 'content': 'Discuss The Black Cat'},
+                   {'role': 'assistant', 'content': 'The Tell-Tale Heart is another tale.'}]
+        self.assertEqual(mentioned_works('Why does he confess?', history, catalog), [catalog[0]])
+        self.assertEqual(mentioned_works('Now The Tell-Tale Heart', history, catalog), [catalog[1]])
+        self.assertEqual(mentioned_works('Compare The Black Cat and The Tell-Tale Heart', history, catalog), catalog)
+        self.assertEqual(mentioned_works('Discuss Black Cat', [], catalog), [catalog[0]])
+
+    def test_contents_aliases_match_headings_and_missing_work_fails_closed(self):
+        from poe_sources import anthology_sections
+        text = ('Contents\n\n THE UNPARALLELED ADVENTURES OF ONE HANS PFAALL\n WILLIAM WILSO\n\n'
+                'THE UNPARALLELED ADVENTURES OF ONE HANS PFAAL (*1)\nFirst story.\n\n'
+                'WILLIAM WILSON\nSecond story.')
+        sections = anthology_sections(text, 'test')
+        self.assertEqual([s['title'] for s in sections[1:]],
+                         ['THE UNPARALLELED ADVENTURES OF ONE HANS PFAAL', 'WILLIAM WILSON'])
+        with self.assertRaisesRegex(ValueError, 'Cannot uniquely locate'):
+            anthology_sections(text.replace('WILLIAM WILSON', 'MISSING HEADING'), 'test')
+
+    @patch('app.pinecone')
+    def test_comparison_retrieves_passages_for_each_named_work(self, pc):
+        works = [{'work_id': 'a', 'work_title': 'A'}, {'work_id': 'b', 'work_title': 'B'}]
+        pc.side_effect = [{'matches': [{'id': 'a1'}]}, {'matches': [{'id': 'b1'}]}]
+        self.assertEqual(app.retrieve_works({'namespace': 'test'}, works, 6), [{'id': 'a1'}, {'id': 'b1'}])
+        self.assertEqual([call.args[1]['topK'] for call in pc.call_args_list], [3, 3])
+        self.assertEqual([call.args[1]['filter'] for call in pc.call_args_list],
+                         [{'work_id': {'$eq': 'a'}}, {'work_id': {'$eq': 'b'}}])
 
     def test_essay_parser_excludes_navigation_notes_page_labels_and_scripts(self):
         html = essay_html().replace('<p>CHARLES DICKENS</p>',
