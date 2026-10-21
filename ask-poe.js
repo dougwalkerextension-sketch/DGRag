@@ -49,7 +49,7 @@
         const source = document.createElement('div');
         source.className = 'source';
         const link = document.createElement('a');
-        const allowed = ['https://www.gutenberg.org/cache/epub/2147/pg2147.txt', 'https://www.gutenberg.org/cache/epub/2148/pg2148.txt'];
+        const allowed = ['https://www.gutenberg.org/cache/epub/2147/pg2147.txt', 'https://www.gutenberg.org/cache/epub/2148/pg2148.txt', 'https://www.eapoe.org/works/essays/philcomp.htm'];
         if (allowed.includes(metadata.url)) { link.href = metadata.url; link.target = '_blank'; link.rel = 'noreferrer'; }
         link.textContent = `[${i + 1}] ${metadata.name || 'Source passage'}`;
         const passage = document.createElement('pre');
@@ -109,11 +109,11 @@
   };
   window.addEventListener('dgrag:state', event => {
     const state = event.detail;
-    el('poe-readiness').textContent = !state.active_namespace
-      ? 'Load and index the Poe volumes in Library & pipeline to begin a conversation.'
+    el('poe-readiness').textContent = (!state.active_namespace || state.reindex_required)
+      ? 'Load and index all three Poe sources in Library & pipeline to begin a conversation.'
       : !state.generation_ready
         ? 'The library is indexed. Download the local answer model using python app.py --download-generator.'
-        : 'The library is ready. Ask about a character, a feeling, a theme, or an image.';
+        : 'The library is ready. Explore characters, imagery, or the art of composition.';
   });
   render();
 })();

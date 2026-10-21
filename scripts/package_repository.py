@@ -4,7 +4,7 @@ from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
 
 root = Path(__file__).resolve().parents[1]
-names = ['.gitignore', '.env.example', 'app.py', 'local_generation.py', 'index.html',
+names = ['.gitignore', '.env.example', 'app.py', 'poe_sources.py', 'local_generation.py', 'index.html',
          'ask-poe.js', 'README.md', 'WORK_SUMMARY.md', 'requirements.txt', 'start.ps1']
 files = [root / name for name in names]
 files += sorted((root / 'scripts').glob('*.py'))
