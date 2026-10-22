@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 import requests
 from poe_sources import ESSAY_URL, ESSAY_NAME, essay_body, anthology_sections, mentioned_works
+from model_comparison import compare_models, openai_config
 
 ROOT = Path(__file__).parent
 DATA = ROOT / 'data'
@@ -365,8 +366,9 @@ def conversation_history(history):
     return cleaned
 
 
-def ask(question, mode='research', history=None):
+def ask(question, mode='research', history=None, openai_history=None, emit=None):
     history = conversation_history(history)
+    remote_history = conversation_history(openai_history)
     require_keys()
     with LOCK:
         namespace = STATE.get('active_namespace')
@@ -430,12 +432,25 @@ def ask(question, mode='research', history=None):
                          'If a requested work or motif is absent from the retrieved passages, acknowledge that limit in character. '
                          'Engage naturally with follow-up questions; you may end with one thoughtful question inviting further exploration.')
     instructions += ' Keep your reply to three concise sentences. Cite each sentence with the supporting excerpt number. Avoid repetition.'
-    event('generate', 'Generating answer locally on CPU', generation=generation_settings())
-    answer = generate_answer([{'role': 'system', 'content': instructions}, *history,
-                              {'role': 'user', 'content': f'Question: {question}\n\nPoe source excerpts:\n{context}\n\nQuestion: {question}\nAnswer briefly with excerpt citations:'}])
+    messages = [{'role': 'system', 'content': instructions}, *history,
+                {'role': 'user', 'content': f'Question: {question}\n\nPoe source excerpts:\n{context}\n\nQuestion: {question}\nAnswer briefly with excerpt citations:'}]
+    outputs = None
+    if mode == 'poe':
+        event('generate', 'Comparing local Qwen, MiniLM retrieval, and optional OpenAI')
+        if emit:
+            emit({'type': 'sources', 'matches': matches})
+        outputs = compare_models(messages, matches, generate_answer, generation_settings()['model'],
+                                 embedding_settings()['model'], openai_config(ROOT),
+                                 remote_messages=[messages[0], *remote_history, messages[-1]], emit=emit)
+        answer = outputs[0]['text']
+    else:
+        event('generate', 'Generating answer locally on CPU', generation=generation_settings())
+        answer = generate_answer(messages)
     output = {'question': question, 'answer': answer, 'matches': matches, 'namespace': namespace,
               'mode': mode, 'generation': generation_settings(),
               'selected_works': [work['work_title'] for work in selected]}
+    if outputs is not None:
+        output['outputs'] = outputs
     with LOCK:
         STATE['answers'].append(output)
     event('answer', 'Generated grounded answer', citations=len(matches))
@@ -458,6 +473,10 @@ class Handler(BaseHTTPRequestHandler):
                                 'local_embedding': embedding_settings(), 'local_generation': generation_settings(),
                                 'source_count': len(SOURCES),
                                 'reindex_required': STATE.get('active_corpus') != CORPUS,
+                                'comparison_models': {'local': generation_settings()['model'],
+                                                      'minilm': embedding_settings()['model'],
+                                                      'openai': openai_config(ROOT)['model'],
+                                                      'openai_connected': bool(openai_config(ROOT)['key'])},
                                 'generation_ready': generation_ready()})
         elif self.path == '/':
             self.send_response(200)
@@ -495,8 +514,30 @@ class Handler(BaseHTTPRequestHandler):
                 question = body.get('question', '').strip()
                 if not 1 <= len(question) <= 2000:
                     raise ValueError('Question must be 1 to 2000 characters')
+                if self.path == '/api/poe' and body.get('stream') is True:
+                    # Validate before sending headers; stream independent model completions.
+                    history = conversation_history(body.get('history'))
+                    remote_history = conversation_history(body.get('openai_history'))
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/x-ndjson; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    def emit(item):
+                        self.wfile.write((json.dumps(item) + '\n').encode('utf-8'))
+                        self.wfile.flush()
+                    try:
+                        output = ask(question, mode='poe', history=history,
+                                     openai_history=remote_history, emit=emit)
+                        emit({'type': 'complete', 'result': output})
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    except Exception as exc:
+                        message = str(exc) if isinstance(exc, ValueError) else 'Comparison failed. Check network access and configuration.'
+                        emit({'type': 'error', 'message': message})
+                    return
                 self.send_json(ask(question, mode='poe' if self.path == '/api/poe' else 'research',
-                                   history=body.get('history') if self.path == '/api/poe' else None))
+                                   history=body.get('history') if self.path == '/api/poe' else None,
+                                   openai_history=body.get('openai_history') if self.path == '/api/poe' else None))
             else:
                 self.send_json({'error': 'Not found'}, 404)
         except ValueError as exc:

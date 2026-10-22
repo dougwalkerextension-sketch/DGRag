@@ -36,11 +36,14 @@ class PipelineTests(unittest.TestCase):
         app.STATE['active_works'] = []
         self.persistence = patch('app.persist')
         self.persistence.start()
+        self.openai_settings = patch('app.openai_config', return_value={'key': '', 'model': 'gpt-4.1-mini'})
+        self.openai_settings.start()
 
     def tearDown(self):
         app.STATE.clear()
         app.STATE.update(self.original)
         self.persistence.stop()
+        self.openai_settings.stop()
 
     def test_import_rejects_duplicate_and_unconfigured_sources(self):
         with self.assertRaises(ValueError):
@@ -217,6 +220,23 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(mentioned_works('Now The Tell-Tale Heart', history, catalog), [catalog[1]])
         self.assertEqual(mentioned_works('Compare The Black Cat and The Tell-Tale Heart', history, catalog), catalog)
         self.assertEqual(mentioned_works('Discuss Black Cat', [], catalog), [catalog[0]])
+
+    @patch('app.require_keys')
+    @patch('app.embed', return_value=[[0.1]])
+    @patch('app.pinecone', return_value={'matches': [{'metadata': {'name': 'Source', 'text': 'Evidence'}}]})
+    @patch('app.compare_models')
+    def test_comparison_keeps_each_models_reply_history_separate(self, comparison, pc, embed, keys):
+        app.STATE['embedding_settings'] = app.embedding_settings()
+        comparison.return_value = [{'id': 'local', 'text': 'Local answer', 'status': 'complete'}]
+        local = [{'role': 'user', 'content': 'Earlier question'}, {'role': 'assistant', 'content': 'Local history'}]
+        remote = [{'role': 'user', 'content': 'Earlier question'}, {'role': 'assistant', 'content': 'Remote history'}]
+        output = app.ask('Follow up', mode='poe', history=local, openai_history=remote)
+        local_messages = comparison.call_args.args[0]
+        remote_messages = comparison.call_args.kwargs['remote_messages']
+        self.assertEqual(local_messages[1:3], local)
+        self.assertEqual(remote_messages[1:3], remote)
+        self.assertEqual(local_messages[-1], remote_messages[-1])
+        self.assertEqual(output['outputs'][0]['text'], 'Local answer')
 
     def test_contents_aliases_match_headings_and_missing_work_fails_closed(self):
         from poe_sources import anthology_sections

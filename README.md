@@ -16,7 +16,7 @@ This workspace includes a portable Python runtime and installed dependencies. Ru
 
 Open http://127.0.0.1:8000. The application binds to localhost only. **Load Poe texts** downloads or reads cached copies of all three sources, validates Gutenberg markers and ebook IDs, removes Gutenberg wrappers, and extracts the essay's text body without site navigation, page labels, scripts, or editorial notes. Missing or incomplete essay bodies are rejected. This requires no API keys. Raw text/HTML, cleaned bodies, prepared chunks, run history, and activity persist under ignored `data/`.
 
-**Index in Pinecone** embeds and stores the text after credentials are configured in `.env`. Restart after changing configuration. Set `PINECONE_API_KEY` and `PINECONE_INDEX_HOST` for indexing. Use a Pinecone dense vector index with cosine similarity and **384 dimensions** for the default local `sentence-transformers/all-MiniLM-L6-v2` model. Answer generation runs locally and needs no API key. `PINECONE_INDEX_HOST` is the index hostname ending in `.pinecone.io`. Credentials are never included in dashboard responses.
+**Index in Pinecone** embeds and stores the text after credentials are configured in `.env`. Restart after changing configuration. Set `PINECONE_API_KEY` and `PINECONE_INDEX_HOST` for indexing. Use a Pinecone dense vector index with cosine similarity and **384 dimensions** for the default local `sentence-transformers/all-MiniLM-L6-v2` model. Local answer generation needs no API key. The optional OpenAI comparison output uses OPENAI_API_KEY. `PINECONE_INDEX_HOST` is the index hostname ending in `.pinecone.io`. Credentials are never included in dashboard responses.
 
 For a fresh checkout with Python 3.11 or newer:
 
@@ -30,7 +30,11 @@ Copy-Item .env.example .env
 
 ## Ask Poe
 
-Select **Ask Poe** to converse with a literary simulation of Edgar Allan Poe about characters, feelings, recurring themes, or imagery such as ravens and clocks. Suggested questions help begin a conversation. Follow-ups include recent dialogue in retrieval, using the same local Hugging Face embedding model and Pinecone index as the library. The local Hugging Face Qwen model generates the replies in a Poe-inspired voice, constrained to the retrieved passages; missing evidence is acknowledged rather than invented.
+Select **Ask Poe** to converse with a literary simulation of Edgar Allan Poe about characters, feelings, recurring themes, or imagery such as ravens and clocks. Suggested questions help begin a conversation. Follow-ups include recent dialogue in retrieval, using the same local Hugging Face embedding model and Pinecone index as the library. Each prompt creates three horizontally arranged output text boxes: the current local Hugging Face Qwen model on the left, all-MiniLM-L6-v2 retrieved passages in the center, and OpenAI on the right. MiniLM is an embedding model: its output is source passages, not a second generative Poe reply. Qwen and optional OpenAI generate independently in a Poe-inspired voice using the same work-aware retrieval and composition-essay evidence.
+
+After shared MiniLM/Pinecone retrieval, Qwen and OpenAI run concurrently. The streaming `/api/poe` response sends each completed output separately, so a slow or failed model does not hide other outputs. Source passages remain expandable below each row. Saved browser history retains all three outputs, and each generative model receives only its own successful prior replies along with recent user prompts. Old saved conversations remain readable. Smaller screens scroll horizontally to preserve the left/center/right order.
+
+Set `OPENAI_API_KEY` and optionally `OPENAI_CHAT_MODEL` (default `gpt-4.1-mini`) in `.env` to enable the right-hand output. The key is read server-side on each prompt and never sent to the browser or exported. When absent or blank, that box says exactly **not connected** and makes no OpenAI request. A configured key enables one Responses API request per Ask Poe prompt, sending the prompt, that model's recent history, and retrieved passages with `store: false`. OpenAI authentication, network, or quota errors appear only in its box; configured does not imply the key has been validated. Research mode remains local Qwen only. [Official API guide](https://developers.openai.com/api/docs/guides/text).
 
 The Gutenberg files are anthologies, not continuous narratives. Their contents entries are resolved to body headings, yielding **30 separate literary works** (8 in Volume 1 and 22 in Volume 2). Chunks overlap only within the same work. Each chunk has a stable work ID, work title, parent volume, work type, and offsets in both the work and volume. Contents pages, introductions, and the second volume's endnotes are separate editorial sections; these are excluded from default Ask Poe story retrieval. Notes are not silently attached to a story.
 
@@ -40,7 +44,7 @@ The simulator uses **The Philosophy of Composition** as its interpretive frame: 
 
 **Upgrading from any earlier corpus version (including the volume-wide essay version):** restart the server, select **Load Poe texts**, then **Index in Pinecone**. Both steps must complete with all three sources. Indexes without the current work boundaries and metadata are rejected with a reindex message; preparing documents alone does not activate a new corpus. Partial JSON imports remain available for research, but Ask Poe requires an indexed essay and refuses to generate if its passages are unavailable. Existing Pinecone namespaces are preserved.
 
-Each reply has expandable supporting passages and numbered references. Conversation history is retained in this browser (up to 20 exchanges), with the last six exchanges sent for context. **New conversation** resets the visible browser conversation. Successful exchanges also remain in the application's exported answer log. Conversations require a completed Pinecone ingestion and the cached local answer model. The tab supports keyboard navigation and can be opened directly at http://127.0.0.1:8000/#ask-poe.
+Each reply has expandable supporting passages and numbered references. Conversation history is retained in this browser (up to 20 exchanges), with the last six exchanges sent for context. **New conversation** resets the visible browser conversation. Comparison exchanges and per-model status also remain in the application's exported answer log. Conversations require a completed Pinecone ingestion. The left column requires the cached local answer model; a missing local generator does not block MiniLM or configured OpenAI outputs. The tab supports keyboard navigation and can be opened directly at http://127.0.0.1:8000/#ask-poe.
 
 ## Local embedding model
 
@@ -50,7 +54,7 @@ Download the public model once before indexing:
 .\.runtime\python.exe app.py --download-model
 ```
 
-This stores model weights and tokenizer files in `data/huggingface/`. Runtime loads use `local_files_only=True`, CPU inference, and `trust_remote_code=False`; embedding calls need neither internet nor a Hugging Face API token. Initial model acquisition requires internet. Only Pinecone storage and retrieval use a remote service; both embedding and answer inference run locally.
+This stores model weights and tokenizer files in `data/huggingface/`. Runtime loads use `local_files_only=True`, CPU inference, and `trust_remote_code=False`; embedding calls need neither internet nor a Hugging Face API token. Initial model acquisition requires internet. MiniLM embeddings and Qwen inference run locally. Pinecone stores and retrieves vectors; the optional OpenAI column uses remote generation when its key is set.
 
 `EMBEDDING_MODEL` selects the model or a local Sentence Transformers folder; `EMBEDDING_REVISION` pins the Hub revision. The default MiniLM model is pinned in `.env.example`. For a custom model, update or clear that revision and match the Pinecone dimension to its output. The default dimension changed from 1536 to **384**; create or select a matching index and reindex. No existing index is deleted or resized.
 
@@ -66,7 +70,7 @@ The default answer model is **Qwen/Qwen2.5-0.5B-Instruct**, a separate causal la
 
 Set `GENERATION_MODEL`, `GENERATION_REVISION`, and `GENERATION_MAX_NEW_TOKENS` in `.env` to configure it, then restart. Local generation needs several GB of free RAM and can be slower than a hosted model. This small default model prioritizes local CPU use; interpretive quality and citation reliability may be limited. A larger compatible instruction model can be selected if your hardware supports it. The prompt retains current evidence and trims older conversation first when the token budget is exceeded. Pinecone indexing does not need to be repeated when changing only the answer model.
 
-No OpenAI key is required or used. [Qwen model card](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct).
+No OpenAI key is required for local inference. It is used only for the optional OpenAI comparison column. [Qwen model card](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct).
 
 ## Pipeline and results
 
@@ -100,7 +104,7 @@ The index must accept locally generated dense vectors: 384 dimensions, cosine si
 .\.runtime\python.exe scripts/check_local_generation.py
 ```
 
-The unit suite uses mocked model execution and provider responses, including essay extraction and malformed-page rejection, three-source caching, reserved essay retrieval, framing instructions, missing essay evidence, and old-index migration, work boundaries, heading aliases, title-scoped follow-ups, and balanced comparison retrieval. Separate embedding and generation checks run the actual cached models on Poe passages with network connections blocked. Receipts are saved to `data/local-embedding-check.json` and `data/local-generation-check.json`. Only Pinecone access requires credentials. Local generation requires downloaded model weights. The application is a single-user local tool. WORK_SUMMARY.md retains the work record.
+The unit suite uses mocked model execution and provider responses, including essay extraction and malformed-page rejection, three-source caching, reserved essay retrieval, framing instructions, missing essay evidence, and old-index migration, work boundaries, heading aliases, title-scoped follow-ups, balanced comparison retrieval, concurrent model execution, missing-key behavior, Responses API payloads, and isolated provider failures. Separate embedding and generation checks run the actual cached models on Poe passages with network connections blocked. Receipts are saved to `data/local-embedding-check.json` and `data/local-generation-check.json`. Pinecone access requires its credentials; optional OpenAI generation requires its own key. Local generation requires downloaded model weights. The application is a single-user local tool. WORK_SUMMARY.md retains the work record.
 
 ## GitHub publication
 
