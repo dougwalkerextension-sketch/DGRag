@@ -30,9 +30,9 @@ Copy-Item .env.example .env
 
 ## Ask Poe
 
-Select **Ask Poe** to converse with a literary simulation of Edgar Allan Poe about characters, feelings, recurring themes, or imagery such as ravens and clocks. Suggested questions help begin a conversation. Follow-ups include recent dialogue in retrieval, using the same local Hugging Face embedding model and Pinecone index as the library. Each prompt creates three horizontally arranged output text boxes: the current local Hugging Face Qwen model on the left, local Mistral 7B in the center, and OpenAI on the right. Qwen, Mistral, and optional OpenAI generate independent replies in a Poe-inspired voice using the same work-aware retrieval and composition-essay evidence.
+Select **Ask Poe** to converse with a literary simulation of Edgar Allan Poe about characters, feelings, recurring themes, or imagery such as ravens and clocks. Suggested questions help begin a conversation. Follow-ups include recent dialogue in retrieval, using the same local Hugging Face embedding model and Pinecone index as the library. Each prompt creates three horizontally arranged output text boxes: local DeepSeek R1 8B on the left, local Mistral 7B in the center, and OpenAI on the right. DeepSeek R1, Mistral, and optional OpenAI generate independent replies in a Poe-inspired voice using the same work-aware retrieval and composition-essay evidence.
 
-After shared MiniLM/Pinecone retrieval, Qwen, Mistral, and OpenAI run concurrently. The streaming `/api/poe` response sends each completed output separately, so a slow or failed model does not hide other outputs. Source passages remain expandable below each row. Saved browser history retains all three outputs, and each generative model receives only its own successful prior replies along with recent user prompts. Old saved conversations remain readable. Smaller screens scroll horizontally to preserve the left/center/right order.
+After shared MiniLM/Pinecone retrieval, DeepSeek R1, Mistral, and OpenAI run concurrently. The streaming `/api/poe` response sends each completed output separately, so a slow or failed model does not hide other outputs. Source passages remain expandable below each row. Saved browser history retains all three outputs, and each generative model receives only its own successful prior replies along with recent user prompts. Old saved conversations remain readable. Smaller screens scroll horizontally to preserve the left/center/right order.
 
 The center column uses **Mistral 7B via local Ollama**, not MiniLM passage output. MiniLM remains the shared embedding model, so this change needs no Pinecone reindex. Install/start Ollama and download the model once:
 
@@ -42,7 +42,7 @@ ollama pull mistral:7b
 
 Ollama must serve `http://127.0.0.1:11434`; no Mistral API key or hosted Mistral service is used. Set `MISTRAL_MODEL=mistral:7b` in `.env` to select an installed Ollama model, then restart DGRag. Mistral gets its own successful reply history and the same current source evidence. Old conversation rows containing MiniLM passages are explicitly labeled as earlier output, rather than presented as Mistral-generated replies. Missing models or an unavailable Ollama service produce recovery instructions in the center box while the other models continue. The quantized model download is approximately 4.4 GB; inference speed depends on hardware. [Ollama Mistral model](https://ollama.com/library/mistral), [local chat API](https://docs.ollama.com/api/chat).
 
-Set `OPENAI_API_KEY` and optionally `OPENAI_CHAT_MODEL` (default `gpt-4.1-mini`) in `.env` to enable the right-hand output. The key is read server-side on each prompt and never sent to the browser or exported. When absent or blank, that box says exactly **not connected** and makes no OpenAI request. A configured key enables one Responses API request per Ask Poe prompt, sending the prompt, that model's recent history, and retrieved passages with `store: false`. OpenAI authentication, network, or quota errors appear only in its box; configured does not imply the key has been validated. Research mode remains local Qwen only. [Official API guide](https://developers.openai.com/api/docs/guides/text).
+Set `OPENAI_API_KEY` and optionally `OPENAI_CHAT_MODEL` (default `gpt-4.1-mini`) in `.env` to enable the right-hand output. The key is read server-side on each prompt and never sent to the browser or exported. When absent or blank, that box says exactly **not connected** and makes no OpenAI request. A configured key enables one Responses API request per Ask Poe prompt, sending the prompt, that model's recent history, and retrieved passages with `store: false`. OpenAI authentication, network, or quota errors appear only in its box; configured does not imply the key has been validated. Research mode remains local DeepSeek R1 only. [Official API guide](https://developers.openai.com/api/docs/guides/text).
 
 The Gutenberg files are anthologies, not continuous narratives. Their contents entries are resolved to body headings, yielding **30 separate literary works** (8 in Volume 1 and 22 in Volume 2). Chunks overlap only within the same work. Each chunk has a stable work ID, work title, parent volume, work type, and offsets in both the work and volume. Contents pages, introductions, and the second volume's endnotes are separate editorial sections; these are excluded from default Ask Poe story retrieval. Notes are not silently attached to a story.
 
@@ -52,7 +52,7 @@ The simulator uses **The Philosophy of Composition** as its interpretive frame: 
 
 **Upgrading from any earlier corpus version (including the volume-wide essay version):** restart the server, select **Load Poe texts**, then **Index in Pinecone**. Both steps must complete with all three sources. Indexes without the current work boundaries and metadata are rejected with a reindex message; preparing documents alone does not activate a new corpus. Partial JSON imports remain available for research, but Ask Poe requires an indexed essay and refuses to generate if its passages are unavailable. Existing Pinecone namespaces are preserved.
 
-Each reply has expandable supporting passages and numbered references. Conversation history is retained in this browser (up to 20 exchanges), with the last six exchanges sent for context. **New conversation** resets the visible browser conversation. Comparison exchanges and per-model status also remain in the application's exported answer log. Conversations require a completed Pinecone ingestion. The left column requires the cached local answer model; a missing local generator does not block Mistral or configured OpenAI outputs. The tab supports keyboard navigation and can be opened directly at http://127.0.0.1:8000/#ask-poe.
+Each reply has expandable supporting passages and numbered references. Conversation history is retained in this browser (up to 20 exchanges), with the last six exchanges sent for context. **New conversation** resets the visible browser conversation. Comparison exchanges and per-model status also remain in the application's exported answer log. Conversations require a completed Pinecone ingestion. The left column requires the downloaded local DeepSeek model and running Ollama; a missing local generator does not block Mistral or configured OpenAI outputs. The tab supports keyboard navigation and can be opened directly at http://127.0.0.1:8000/#ask-poe.
 
 ## Local embedding model
 
@@ -62,7 +62,7 @@ Download the public model once before indexing:
 .\.runtime\python.exe app.py --download-model
 ```
 
-This stores model weights and tokenizer files in `data/huggingface/`. Runtime loads use `local_files_only=True`, CPU inference, and `trust_remote_code=False`; embedding calls need neither internet nor a Hugging Face API token. Initial model acquisition requires internet. MiniLM embeddings, Qwen inference, and Mistral inference run locally. Pinecone stores and retrieves vectors; the optional OpenAI column uses remote generation when its key is set.
+This stores model weights and tokenizer files in `data/huggingface/`. Runtime loads use `local_files_only=True`, CPU inference, and `trust_remote_code=False`; embedding calls need neither internet nor a Hugging Face API token. Initial model acquisition requires internet. MiniLM embeddings, DeepSeek R1 inference, and Mistral inference run locally. Pinecone stores and retrieves vectors; the optional OpenAI column uses remote generation when its key is set.
 
 `EMBEDDING_MODEL` selects the model or a local Sentence Transformers folder; `EMBEDDING_REVISION` pins the Hub revision. The default MiniLM model is pinned in `.env.example`. For a custom model, update or clear that revision and match the Pinecone dimension to its output. The default dimension changed from 1536 to **384**; create or select a matching index and reindex. No existing index is deleted or resized.
 
@@ -70,15 +70,20 @@ Model source: [Hugging Face model card](https://huggingface.co/sentence-transfor
 
 ## Local answer generation
 
-The default answer model is **Qwen/Qwen2.5-0.5B-Instruct**, a separate causal language model from the MiniLM embedding model. It runs on CPU using Transformers, with a pinned revision, local-only weight loading, and no remote code or inference fallback. Download its approximately 1 GB of weights once:
+The left-hand generator is **DeepSeek R1 8B**, served locally by Ollama as `deepseek-r1:8b`. The center column uses local Mistral 7B through the same Ollama service. Install/start Ollama and download both models once:
 
 ```powershell
-.\.runtime\python.exe app.py --download-generator
+ollama pull deepseek-r1:8b
+ollama pull mistral:7b
 ```
 
-Set `GENERATION_MODEL`, `GENERATION_REVISION`, and `GENERATION_MAX_NEW_TOKENS` in `.env` to configure it, then restart. Local generation needs several GB of free RAM and can be slower than a hosted model. This small default model prioritizes local CPU use; interpretive quality and citation reliability may be limited. A larger compatible instruction model can be selected if your hardware supports it. The prompt retains current evidence and trims older conversation first when the token budget is exceeded. Pinecone indexing does not need to be repeated when changing only the answer model.
+The DeepSeek download is approximately 5.2 GB. The existing `python app.py --download-generator` command also downloads the configured DeepSeek model through local Ollama. MiniLM embeddings remain in the Hugging Face cache and use the existing embedding download command.
 
-No OpenAI key is required for local inference. It is used only for the optional OpenAI comparison column. [Qwen model card](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct).
+Set `DEEPSEEK_MODEL=deepseek-r1:8b` and `DEEPSEEK_MAX_NEW_TOKENS=2048` in `.env`, then restart DGRag. The old Qwen `GENERATION_MODEL`, `GENERATION_REVISION`, and `GENERATION_MAX_NEW_TOKENS` settings no longer select the generator. Mistral uses `MISTRAL_MODEL`. No DeepSeek or Mistral API key or hosted generation endpoint is used.
+
+DeepSeek reasoning is enabled, but only its final answer is displayed and saved; Ollama's separate thinking field and legacy thinking tags are excluded. If the token budget is exhausted before a final answer, its box reports that condition rather than showing reasoning as a reply. Increasing `DEEPSEEK_MAX_NEW_TOKENS` allows longer reasoning at the cost of latency. Earlier dialogue is capped at 1,000 characters per message while the current question, evidence, and instructions are retained. Both local models submit independently; Ollama may queue them depending on available memory and hardware.
+
+Earlier Qwen replies remain readable under their original model identity, but are not used as DeepSeek's assistant history. Each model's successful replies are reused only when their saved model ID matches the currently selected model. Changing the generator needs a server restart and browser refresh, not Pinecone reindexing. [DeepSeek R1 model](https://ollama.com/library/deepseek-r1), [Ollama chat API](https://docs.ollama.com/api/chat).
 
 ## Pipeline and results
 
@@ -87,7 +92,7 @@ No OpenAI key is required for local inference. It is used only for the optional 
 3. **Embed:** the Hugging Face model runs locally on CPU through Sentence Transformers. Each input is split into windows within the model context limit; normalized window vectors are averaged and normalized again. This embeds the full passage without silent truncation. Events expose the model, pinned revision, pooling settings, batch sizes, and 384-dimensional output. There are no OpenAI embedding calls.
 4. **Store:** Pinecone upsert receipts are checked. Each run uses a fresh `dgrag-poe-…` namespace; it becomes active only when all batches succeed. Old namespaces remain for audit and manual cleanup. Failed writes preserve the previous active namespace. Pinecone can take a moment to make writes queryable.
 5. **Retrieve:** questions use the same local model, revision, normalization, and pooling settings as ingestion and retrieve eight chunks from the active namespace. Old OpenAI indexes and changed model settings are rejected; reindex after switching.
-6. **Answer:** the local Hugging Face Qwen model generates an answer constrained to the retrieved text, with numbered citations. Ask Poe additionally uses the essay's composition framework. The dashboard shows similarity scores and exact passages. Coverage is limited to Volumes 1 and 2 and the composition essay, not all of Poe's works.
+6. **Answer:** local DeepSeek R1 generates an answer constrained to the retrieved text, with numbered citations. Ask Poe additionally uses the essay's composition framework. The dashboard shows similarity scores and exact passages. Coverage is limited to Volumes 1 and 2 and the composition essay, not all of Poe's works.
 
 The dashboard includes a searchable source collection, every document chunk, event details, question history, and **Export results** for full JSON. Provider secrets and full embedding arrays are excluded. State uses `data/poe-state.json`; the active corpus version and indexed source URLs are recorded only after successful ingestion, so older two-volume indexes require an explicit upgrade.
 
@@ -112,7 +117,7 @@ The index must accept locally generated dense vectors: 384 dimensions, cosine si
 .\.runtime\python.exe scripts/check_local_generation.py
 ```
 
-The unit suite uses mocked model execution and provider responses, including essay extraction and malformed-page rejection, three-source caching, reserved essay retrieval, framing instructions, missing essay evidence, and old-index migration, work boundaries, heading aliases, title-scoped follow-ups, balanced comparison retrieval, concurrent model execution, missing-key behavior, Responses API payloads, and isolated provider failures. Separate embedding and generation checks run the actual cached models on Poe passages with network connections blocked. Receipts are saved to `data/local-embedding-check.json` and `data/local-generation-check.json`. Pinecone access requires its credentials; optional OpenAI generation requires its own key. Local generation requires downloaded model weights. The application is a single-user local tool. WORK_SUMMARY.md retains the work record.
+The unit suite uses mocked model execution and provider responses, including essay extraction and malformed-page rejection, three-source caching, reserved essay retrieval, framing instructions, missing essay evidence, and old-index migration, work boundaries, heading aliases, title-scoped follow-ups, balanced comparison retrieval, concurrent model execution, missing-key behavior, Responses API payloads, and isolated provider failures. Separate embedding and generation checks run the actual local models on Poe passages. The embedding check blocks network connections; the generation check permits only loopback Ollama connections and rejects external connections. Receipts are saved to `data/local-embedding-check.json` and `data/local-generation-check.json`. Pinecone access requires its credentials; optional OpenAI generation requires its own key. Local generation requires downloaded Ollama models. The application is a single-user local tool. WORK_SUMMARY.md retains the work record.
 
 ## GitHub publication
 

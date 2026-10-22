@@ -82,7 +82,7 @@ def compare_models(messages, matches, local_generate, local_model, mistral_model
                 status = 'not_connected' if key == 'openai' and not settings['key'] else 'complete'
             except Exception as exc:
                 # Unexpected exceptions and provider response bodies can contain secrets.
-                text = str(exc) if isinstance(exc, ValueError) and key in ('openai', 'mistral') else f'{model} could not respond. Check its configuration and try again.'
+                text = str(exc) if isinstance(exc, ValueError) else f'{model} could not respond. Check its configuration and try again.'
                 status = 'error'
             output = {'id': key, 'model': model, 'status': status, 'text': text}
             outputs[key] = output

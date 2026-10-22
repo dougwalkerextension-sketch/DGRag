@@ -64,7 +64,7 @@
     return message;
   }
   const modelOrder = ['local', 'mistral', 'openai'];
-  const modelLabels = {local: 'Current local model', mistral: 'Mistral', openai: 'OpenAI'};
+  const modelLabels = {local: 'DeepSeek R1 (local)', mistral: 'Mistral', openai: 'OpenAI'};
   let modelSettings = {}, openaiConnected = null;
 
   function addComparison(outputs = [], matches = []) {
@@ -94,7 +94,7 @@
       status.textContent = pending;
       section.append(title, model, status, box);
       grid.append(section);
-      row.cells[id] = {model, status, box};
+      row.cells[id] = {title, model, status, box};
     }
     row.append(grid);
     el('poe-chat').append(row);
@@ -107,6 +107,9 @@
     const cell = row.cells[output.id];
     if (!cell) return;
     cell.model.textContent = output.model || modelSettings[output.id] || '';
+    if (output.id === 'local' && output.model && modelSettings.local && output.model !== modelSettings.local) {
+      cell.title.textContent = 'Previous local model';
+    }
     cell.box.value = output.text;
     cell.status.textContent = output.status === 'error' ? 'Could not respond'
       : output.status === 'not_connected' ? 'not connected'
@@ -126,7 +129,7 @@
   }
   function render() {
     el('poe-chat').replaceChildren();
-    if (!turns.length) addMessage('assistant', 'Ask a question to compare the current local model, local Mistral, and OpenAI side by side.');
+    if (!turns.length) addMessage('assistant', 'Ask a question to compare the local DeepSeek R1, local Mistral, and OpenAI side by side.');
     for (const turn of turns) {
       addMessage('user', turn.question);
       const saved = turn.outputs?.map(output => output.id === 'minilm' ? {id:'mistral', text:'Mistral was not requested for this earlier prompt. Original MiniLM passages are available below.', status:'not_requested'} : output);
@@ -138,7 +141,8 @@
   function modelHistory(id) {
     return turns.slice(-6).flatMap(turn => {
       const result = turn.outputs?.find(output => output.id === id);
-      const answer = result?.status === 'complete' ? result.text : !turn.outputs && id === 'local' ? turn.answer : '';
+      const sameModel = result?.model === modelSettings[id];
+      const answer = result?.status === 'complete' && sameModel ? result.text : '';
       return [{role:'user', content:turn.question.slice(0,6000)},
         ...(answer ? [{role:'assistant', content:answer.slice(0,6000)}] : [])];
     });
@@ -226,11 +230,16 @@
     const state = event.detail;
     modelSettings = state.comparison_models || {};
     openaiConnected = modelSettings.openai_connected === true;
+    for (const card of document.querySelectorAll('.poe-output-card:first-child')) {
+      const savedModel = card.querySelector('.model-name').textContent;
+      card.querySelector('h2').textContent = savedModel && modelSettings.local && savedModel !== modelSettings.local
+        ? 'Previous local model' : modelLabels.local;
+    }
     el('poe-readiness').textContent = (!state.active_namespace || state.reindex_required)
       ? 'Load and index all three Poe sources in Library & pipeline to begin a conversation.'
       : !state.generation_ready
-        ? 'The library is indexed. The current local model needs its download; Mistral and connected OpenAI remain available.'
-        : 'The library is ready. Each prompt compares local Qwen, local Mistral, and OpenAI.';
+        ? 'The library is indexed. DeepSeek R1 needs its Ollama model download; Mistral and connected OpenAI remain available.'
+        : 'The library is ready. Each prompt compares local DeepSeek R1, local Mistral, and OpenAI.';
   });
   render();
 })();

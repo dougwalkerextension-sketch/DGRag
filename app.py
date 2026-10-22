@@ -437,7 +437,7 @@ def ask(question, mode='research', history=None, openai_history=None, emit=None,
                 {'role': 'user', 'content': f'Question: {question}\n\nPoe source excerpts:\n{context}\n\nQuestion: {question}\nAnswer briefly with excerpt citations:'}]
     outputs = None
     if mode == 'poe':
-        event('generate', 'Comparing local Qwen, local Mistral, and optional OpenAI')
+        event('generate', 'Comparing local DeepSeek R1, local Mistral, and optional OpenAI')
         if emit:
             emit({'type': 'sources', 'matches': matches})
         outputs = compare_models(messages, matches, generate_answer, generation_settings()['model'],
@@ -446,7 +446,7 @@ def ask(question, mode='research', history=None, openai_history=None, emit=None,
                                  mistral_messages=[messages[0], *center_history, messages[-1]])
         answer = outputs[0]['text']
     else:
-        event('generate', 'Generating answer locally on CPU', generation=generation_settings())
+        event('generate', 'Generating answer with local DeepSeek R1', generation=generation_settings())
         answer = generate_answer(messages)
     output = {'question': question, 'answer': answer, 'matches': matches, 'namespace': namespace,
               'mode': mode, 'generation': generation_settings(),
@@ -553,11 +553,17 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     import sys
     if '--download-generator' in sys.argv:
-        from huggingface_hub import snapshot_download
         settings = generation_settings()
-        snapshot_download(settings['model'], revision=settings['revision'],
-                          allow_patterns=['*.json', '*.txt', '*.safetensors', '*.jinja', '*.model'])
-        print('Local answer model downloaded: ' + settings['model'])
+        # Stream Ollama's local pull response to avoid buffering a large progress log.
+        with requests.post('http://127.0.0.1:11434/api/pull',
+                           json={'model': settings['model']}, stream=True, timeout=(10, 600)) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if line:
+                    item = json.loads(line)
+                    if item.get('error'):
+                        raise ValueError('DeepSeek model download failed; check Ollama and source access')
+                    print(item.get('status', 'Downloading'), flush=True)
         sys.exit(0)
     if '--download-model' in sys.argv:
         from huggingface_hub import snapshot_download

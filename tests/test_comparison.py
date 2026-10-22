@@ -21,7 +21,7 @@ class ComparisonTests(unittest.TestCase):
             settings = comparison.openai_config(Path(directory))
             with patch('model_comparison.requests.post') as post:
                 outputs = comparison.compare_models(self.messages, self.matches, lambda _: 'Local reply',
-                                                    'Qwen', 'Mistral', settings)
+                                                    'DeepSeek R1', 'Mistral', settings)
             post.assert_not_called()
         self.assertEqual([o['id'] for o in outputs], ['local', 'mistral', 'openai'])
         self.assertEqual(outputs[-1]['text'], 'not connected')
@@ -47,7 +47,7 @@ class ComparisonTests(unittest.TestCase):
             if item['output']['id'] == 'openai':
                 release.set()
         with patch('model_comparison.openai_answer', side_effect=remote), patch('model_comparison.mistral_answer', side_effect=middle):
-            outputs = comparison.compare_models(self.messages, self.matches, local, 'Qwen', 'Mistral',
+            outputs = comparison.compare_models(self.messages, self.matches, local, 'DeepSeek R1', 'Mistral',
                                                 {'key': 'test-key', 'model': 'test-model'}, emit=emit)
         self.assertTrue(all(o['status'] == 'complete' for o in outputs))
         self.assertLess(streamed.index('openai'), streamed.index('local'))
@@ -55,7 +55,7 @@ class ComparisonTests(unittest.TestCase):
     def test_local_failure_does_not_hide_other_outputs_or_leak_exception(self):
         with patch('model_comparison.openai_answer', return_value='Remote reply'):
             outputs = comparison.compare_models(self.messages, self.matches,
-                Mock(side_effect=RuntimeError('secret-key')), 'Qwen', 'Mistral',
+                Mock(side_effect=RuntimeError('secret-key')), 'DeepSeek R1', 'Mistral',
                 {'key': 'test-key', 'model': 'test-model'})
         self.assertEqual(outputs[0]['status'], 'error')
         self.assertNotIn('secret-key', outputs[0]['text'])
@@ -85,7 +85,7 @@ class ComparisonTests(unittest.TestCase):
     def test_openai_failure_does_not_hide_local_and_mistral(self):
         with patch('model_comparison.openai_answer', side_effect=ValueError('OpenAI timed out. Try again.')):
             outputs = comparison.compare_models(self.messages, self.matches, lambda _: 'Local reply',
-                'Qwen', 'Mistral', {'key': 'test-key', 'model': 'test-model'})
+                'DeepSeek R1', 'Mistral', {'key': 'test-key', 'model': 'test-model'})
         self.assertEqual([o['status'] for o in outputs], ['complete', 'complete', 'error'])
         self.assertEqual(outputs[0]['text'], 'Local reply')
         self.assertEqual(outputs[1]['text'], 'Mistral reply')

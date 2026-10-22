@@ -1,75 +1,51 @@
-"""Cached Hugging Face causal language model; inference never uses a hosted API."""
+"""DeepSeek R1 generation through the local Ollama service."""
 import os
-import threading
-from functools import lru_cache
-from pathlib import Path
+import re
 
-DEFAULT_MODEL = 'Qwen/Qwen2.5-0.5B-Instruct'
-DEFAULT_REVISION = '7ae557604adf67be50417f59c2c2f167def9a775'
-GENERATION_LOCK = threading.RLock()
+import requests
+
+DEFAULT_MODEL = 'deepseek-r1:8b'
 
 
 def generation_settings():
-    model = os.getenv('GENERATION_MODEL', DEFAULT_MODEL)
-    return {'provider': 'huggingface-local', 'model': model,
-            'revision': os.getenv('GENERATION_REVISION') or (DEFAULT_REVISION if model == DEFAULT_MODEL else None),
-            'device': 'cpu'}
+    return {'provider': 'ollama-local', 'model': os.getenv('DEEPSEEK_MODEL') or DEFAULT_MODEL,
+            'endpoint': 'http://127.0.0.1:11434', 'device': 'ollama-managed'}
 
 
 def generation_ready():
-    from huggingface_hub import try_to_load_from_cache
-    settings = generation_settings()
-    local = Path(settings['model'])
-    if local.is_dir():
-        return (local / 'config.json').exists() and any(local.glob('*.safetensors'))
-    return all(isinstance(try_to_load_from_cache(settings['model'], name, revision=settings['revision']), str)
-               for name in ['config.json', 'tokenizer_config.json', 'model.safetensors'])
-
-
-@lru_cache(maxsize=1)
-def load_generator(name, revision):
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    import torch
-    torch.set_num_threads(max(1, min(32, int(os.getenv('LOCAL_MODEL_THREADS', '4')))))
     try:
-        tokenizer = AutoTokenizer.from_pretrained(name, revision=revision, local_files_only=True,
-                                                 trust_remote_code=False)
-        model = AutoModelForCausalLM.from_pretrained(name, revision=revision, local_files_only=True,
-                                                   trust_remote_code=False, dtype=torch.float32)
-        model.to('cpu').eval()
-    except OSError as exc:
-        raise ValueError('Local answer model is missing. Run python app.py --download-generator first.') from exc
-    return tokenizer, model
+        response = requests.get('http://127.0.0.1:11434/api/tags', timeout=(1, 2))
+        response.raise_for_status()
+        return any(model.get('name') == generation_settings()['model']
+                   for model in response.json().get('models', []))
+    except (requests.RequestException, ValueError):
+        return False
 
 
 def generate_answer(messages):
-    import torch
-    settings = generation_settings()
-    with GENERATION_LOCK:
-        tokenizer, model = load_generator(settings['model'], settings['revision'])
-        max_new = max(32, min(1024, int(os.getenv('GENERATION_MAX_NEW_TOKENS', '256'))))
-        budget = min(8192, model.config.max_position_embeddings - max_new)
-        retained = [dict(message) for message in messages]
-        while True:
-            inputs = tokenizer.apply_chat_template(retained, add_generation_prompt=True, tokenize=True,
-                                                   return_dict=True, return_tensors='pt')
-            length = inputs['input_ids'].shape[-1]
-            if length <= budget:
-                break
-            if len(retained) > 2:
-                # Drop old conversation before shortening current evidence.
-                del retained[1:min(3, len(retained) - 1)]
-                continue
-            ids = tokenizer.encode(retained[-1]['content'], add_special_tokens=False)
-            keep = len(ids) - (length - budget) - 16
-            if keep < 64:
-                raise ValueError('Question and instructions exceed the local generation context budget')
-            retained[-1]['content'] = tokenizer.decode(ids[:keep], skip_special_tokens=True)
-        with torch.inference_mode():
-            output = model.generate(**inputs, max_new_tokens=max_new, do_sample=False,
-                                    repetition_penalty=1.15, no_repeat_ngram_size=4,
-                                    pad_token_id=tokenizer.eos_token_id)
-        answer = tokenizer.decode(output[0][length:], skip_special_tokens=True).strip()
-        if not answer:
-            raise ValueError('Local answer model returned no text; try a shorter question')
-        return answer
+    # Preserve full current evidence and instructions; bound only earlier dialogue.
+    retained = [messages[0], *[{**m, 'content': m['content'][:1000]} for m in messages[1:-1]], messages[-1]]
+    model = generation_settings()['model']
+    try:
+        response = requests.post('http://127.0.0.1:11434/api/chat',
+            json={'model': model, 'messages': retained, 'stream': False, 'think': True,
+                  'options': {'temperature': 0.6, 'num_ctx': 16384,
+                              'num_predict': max(256, min(8192, int(os.getenv('DEEPSEEK_MAX_NEW_TOKENS', '2048'))))}},
+            timeout=(10, 300))
+        if response.status_code == 404:
+            raise ValueError('DeepSeek R1 model is missing. Run ollama pull ' + model + '.')
+        if not response.ok:
+            raise ValueError(f'Local DeepSeek R1 returned HTTP {response.status_code}. Check Ollama and model availability.')
+        # Ollama separates reasoning from the final answer. Never display the reasoning field.
+        text = response.json().get('message', {}).get('content', '').strip()
+        # Also handle older Ollama versions that embed thinking tags in content.
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+        if '<think>' in text:
+            text = text.split('<think>', 1)[0].strip()
+        if not text:
+            raise ValueError('DeepSeek R1 returned no final answer. Increase DEEPSEEK_MAX_NEW_TOKENS or try a shorter question.')
+        return text
+    except requests.Timeout as exc:
+        raise ValueError('Local DeepSeek R1 timed out. Try a shorter question or check Ollama.') from exc
+    except requests.ConnectionError as exc:
+        raise ValueError('Cannot connect to local DeepSeek R1. Start Ollama on port 11434.') from exc
