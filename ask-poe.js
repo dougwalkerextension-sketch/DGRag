@@ -8,6 +8,7 @@
   } catch (_) { /* Chat works when browser storage is unavailable. */ }
 
   function selectTab(name, focus = false) {
+    document.body.classList.toggle('poe-view', name === 'poe');
     for (const tab of ['library', 'poe']) {
       const selected = tab === name;
       el(`${tab}-tab`).setAttribute('aria-selected', String(selected));
@@ -239,7 +240,7 @@
       ? 'Load and index all three Poe sources in Library & pipeline to begin a conversation.'
       : !state.generation_ready
         ? 'The library is indexed. DeepSeek R1 needs its Ollama model download; Mistral and connected OpenAI remain available.'
-        : 'The library is ready. Each prompt compares local DeepSeek R1, local Mistral, and OpenAI.';
+        : openaiConnected ? 'Ready. OpenAI is configured.' : 'Ready. OpenAI: not connected.';
   });
   render();
 })();
