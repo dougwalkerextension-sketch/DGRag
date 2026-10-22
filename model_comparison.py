@@ -42,16 +42,35 @@ def openai_answer(messages, settings):
         raise ValueError('Cannot connect to OpenAI. Check network access.') from exc
 
 
-def minilm_passages(matches):
-    return '\n\n'.join(f'[{i}] {match.get("metadata", {}).get("name", "Source")}\n'
-                        + match.get('metadata', {}).get('text', '')
-                        for i, match in enumerate(matches, 1))
+def mistral_settings():
+    return {'provider': 'ollama-local', 'model': os.getenv('MISTRAL_MODEL') or 'mistral:7b'}
 
 
-def compare_models(messages, matches, local_generate, local_model, embedding_model,
-                   settings, remote_messages=None, emit=None):
+def mistral_answer(messages):
+    # Ollama is loopback-only; this column never calls a hosted Mistral service.
+    retained = [messages[0], *[{**m, 'content': m['content'][:1000]} for m in messages[1:-1]], messages[-1]]
+    try:
+        response = requests.post('http://127.0.0.1:11434/api/chat',
+            json={'model': mistral_settings()['model'], 'messages': retained, 'stream': False,
+                  'options': {'temperature': 0, 'num_predict': 256, 'num_ctx': 16384}}, timeout=(10, 300))
+        if response.status_code == 404:
+            raise ValueError('Mistral model is missing. Run ollama pull ' + mistral_settings()['model'] + '.')
+        if not response.ok:
+            raise ValueError(f'Local Mistral returned HTTP {response.status_code}. Check Ollama and model availability.')
+        text = response.json().get('message', {}).get('content', '').strip()
+        if not text:
+            raise ValueError('Local Mistral returned no text. Try again.')
+        return text
+    except requests.Timeout as exc:
+        raise ValueError('Local Mistral timed out. Check Ollama or try a shorter question.') from exc
+    except requests.ConnectionError as exc:
+        raise ValueError('Cannot connect to local Mistral. Start Ollama on port 11434.') from exc
+
+
+def compare_models(messages, matches, local_generate, local_model, mistral_model,
+                   settings, remote_messages=None, emit=None, mistral_messages=None):
     specs = [('local', local_model, lambda: local_generate(messages)),
-             ('minilm', embedding_model, lambda: minilm_passages(matches)),
+             ('mistral', mistral_model, lambda: mistral_answer(mistral_messages or messages)),
              ('openai', settings['model'], lambda: openai_answer(remote_messages or messages, settings))]
     outputs = {}
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -63,7 +82,7 @@ def compare_models(messages, matches, local_generate, local_model, embedding_mod
                 status = 'not_connected' if key == 'openai' and not settings['key'] else 'complete'
             except Exception as exc:
                 # Unexpected exceptions and provider response bodies can contain secrets.
-                text = str(exc) if isinstance(exc, ValueError) and key == 'openai' else f'{model} could not respond. Check its configuration and try again.'
+                text = str(exc) if isinstance(exc, ValueError) and key in ('openai', 'mistral') else f'{model} could not respond. Check its configuration and try again.'
                 status = 'error'
             output = {'id': key, 'model': model, 'status': status, 'text': text}
             outputs[key] = output

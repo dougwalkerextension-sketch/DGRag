@@ -63,8 +63,8 @@
     el('poe-chat').scrollTop = el('poe-chat').scrollHeight;
     return message;
   }
-  const modelOrder = ['local', 'minilm', 'openai'];
-  const modelLabels = {local: 'Current local model', minilm: 'all-MiniLM-L6-v2', openai: 'OpenAI'};
+  const modelOrder = ['local', 'mistral', 'openai'];
+  const modelLabels = {local: 'Current local model', mistral: 'Mistral', openai: 'OpenAI'};
   let modelSettings = {}, openaiConnected = null;
 
   function addComparison(outputs = [], matches = []) {
@@ -91,7 +91,7 @@
       box.spellcheck = false;
       const pending = id === 'openai' && openaiConnected === false ? 'not connected' : 'Waiting for response...';
       box.value = pending;
-      status.textContent = id === 'minilm' ? 'Retrieved passages (embedding model)' : pending;
+      status.textContent = pending;
       section.append(title, model, status, box);
       grid.append(section);
       row.cells[id] = {model, status, box};
@@ -111,7 +111,7 @@
     cell.status.textContent = output.status === 'error' ? 'Could not respond'
       : output.status === 'not_connected' ? 'not connected'
       : output.status === 'not_requested' ? 'Not requested'
-      : output.id === 'minilm' ? 'Retrieved passages (embedding model)' : 'Complete';
+      : 'Complete';
     cell.box.dataset.status = output.status;
   }
   function showComparisonSources(row, matches) {
@@ -126,11 +126,12 @@
   }
   function render() {
     el('poe-chat').replaceChildren();
-    if (!turns.length) addMessage('assistant', 'Ask a question to compare the current local model, MiniLM passages, and OpenAI side by side.');
+    if (!turns.length) addMessage('assistant', 'Ask a question to compare the current local model, local Mistral, and OpenAI side by side.');
     for (const turn of turns) {
       addMessage('user', turn.question);
-      addComparison(turn.outputs || [{id:'local', text:turn.answer, status:'complete'},
-        {id:'minilm', text:'Saved passages are available below.', status:'complete'},
+      const saved = turn.outputs?.map(output => output.id === 'minilm' ? {id:'mistral', text:'Mistral was not requested for this earlier prompt. Original MiniLM passages are available below.', status:'not_requested'} : output);
+      addComparison(saved || [{id:'local', text:turn.answer, status:'complete'},
+        {id:'mistral', text:'Mistral was not requested for this earlier prompt.', status:'not_requested'},
         {id:'openai', text:'Not requested for this earlier prompt.', status:'not_requested'}], turn.matches || []);
     }
   }
@@ -162,6 +163,7 @@
     el('poe-error').textContent = '';
     const history = modelHistory('local');
     const openai_history = modelHistory('openai');
+    const mistral_history = modelHistory('mistral');
     addMessage('user', question);
     const row = addComparison();
     const turn = {question, answer:'', outputs:[], matches:[]};
@@ -170,7 +172,7 @@
     let complete = false;
     try {
       const response = await fetch('/api/poe', {method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({question, history, openai_history, stream:true})});
+        body:JSON.stringify({question, history, openai_history, mistral_history, stream:true})});
       if (!response.ok) {
         const error = await response.json();
         throw Error(error.error || 'Poe could not respond. Please try again.');
@@ -227,8 +229,8 @@
     el('poe-readiness').textContent = (!state.active_namespace || state.reindex_required)
       ? 'Load and index all three Poe sources in Library & pipeline to begin a conversation.'
       : !state.generation_ready
-        ? 'The library is indexed. The current local model needs its download; MiniLM and connected OpenAI remain available.'
-        : 'The library is ready. Each prompt compares local Qwen, MiniLM passages, and OpenAI.';
+        ? 'The library is indexed. The current local model needs its download; Mistral and connected OpenAI remain available.'
+        : 'The library is ready. Each prompt compares local Qwen, local Mistral, and OpenAI.';
   });
   render();
 })();

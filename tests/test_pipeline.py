@@ -38,12 +38,15 @@ class PipelineTests(unittest.TestCase):
         self.persistence.start()
         self.openai_settings = patch('app.openai_config', return_value={'key': '', 'model': 'gpt-4.1-mini'})
         self.openai_settings.start()
+        self.mistral_generation = patch('model_comparison.mistral_answer', return_value='Mistral reply')
+        self.mistral_generation.start()
 
     def tearDown(self):
         app.STATE.clear()
         app.STATE.update(self.original)
         self.persistence.stop()
         self.openai_settings.stop()
+        self.mistral_generation.stop()
 
     def test_import_rejects_duplicate_and_unconfigured_sources(self):
         with self.assertRaises(ValueError):
@@ -230,11 +233,13 @@ class PipelineTests(unittest.TestCase):
         comparison.return_value = [{'id': 'local', 'text': 'Local answer', 'status': 'complete'}]
         local = [{'role': 'user', 'content': 'Earlier question'}, {'role': 'assistant', 'content': 'Local history'}]
         remote = [{'role': 'user', 'content': 'Earlier question'}, {'role': 'assistant', 'content': 'Remote history'}]
-        output = app.ask('Follow up', mode='poe', history=local, openai_history=remote)
+        center = [{'role': 'user', 'content': 'Earlier question'}, {'role': 'assistant', 'content': 'Mistral history'}]
+        output = app.ask('Follow up', mode='poe', history=local, openai_history=remote, mistral_history=center)
         local_messages = comparison.call_args.args[0]
         remote_messages = comparison.call_args.kwargs['remote_messages']
         self.assertEqual(local_messages[1:3], local)
         self.assertEqual(remote_messages[1:3], remote)
+        self.assertEqual(comparison.call_args.kwargs['mistral_messages'][1:3], center)
         self.assertEqual(local_messages[-1], remote_messages[-1])
         self.assertEqual(output['outputs'][0]['text'], 'Local answer')
 

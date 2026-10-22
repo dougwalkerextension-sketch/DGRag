@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import requests
 from poe_sources import ESSAY_URL, ESSAY_NAME, essay_body, anthology_sections, mentioned_works
-from model_comparison import compare_models, openai_config
+from model_comparison import compare_models, openai_config, mistral_settings
 
 ROOT = Path(__file__).parent
 DATA = ROOT / 'data'
@@ -366,9 +366,10 @@ def conversation_history(history):
     return cleaned
 
 
-def ask(question, mode='research', history=None, openai_history=None, emit=None):
+def ask(question, mode='research', history=None, openai_history=None, emit=None, mistral_history=None):
     history = conversation_history(history)
     remote_history = conversation_history(openai_history)
+    center_history = conversation_history(mistral_history)
     require_keys()
     with LOCK:
         namespace = STATE.get('active_namespace')
@@ -436,12 +437,13 @@ def ask(question, mode='research', history=None, openai_history=None, emit=None)
                 {'role': 'user', 'content': f'Question: {question}\n\nPoe source excerpts:\n{context}\n\nQuestion: {question}\nAnswer briefly with excerpt citations:'}]
     outputs = None
     if mode == 'poe':
-        event('generate', 'Comparing local Qwen, MiniLM retrieval, and optional OpenAI')
+        event('generate', 'Comparing local Qwen, local Mistral, and optional OpenAI')
         if emit:
             emit({'type': 'sources', 'matches': matches})
         outputs = compare_models(messages, matches, generate_answer, generation_settings()['model'],
-                                 embedding_settings()['model'], openai_config(ROOT),
-                                 remote_messages=[messages[0], *remote_history, messages[-1]], emit=emit)
+                                 mistral_settings()['model'], openai_config(ROOT),
+                                 remote_messages=[messages[0], *remote_history, messages[-1]], emit=emit,
+                                 mistral_messages=[messages[0], *center_history, messages[-1]])
         answer = outputs[0]['text']
     else:
         event('generate', 'Generating answer locally on CPU', generation=generation_settings())
@@ -474,7 +476,7 @@ class Handler(BaseHTTPRequestHandler):
                                 'source_count': len(SOURCES),
                                 'reindex_required': STATE.get('active_corpus') != CORPUS,
                                 'comparison_models': {'local': generation_settings()['model'],
-                                                      'minilm': embedding_settings()['model'],
+                                                      'mistral': mistral_settings()['model'],
                                                       'openai': openai_config(ROOT)['model'],
                                                       'openai_connected': bool(openai_config(ROOT)['key'])},
                                 'generation_ready': generation_ready()})
@@ -518,6 +520,7 @@ class Handler(BaseHTTPRequestHandler):
                     # Validate before sending headers; stream independent model completions.
                     history = conversation_history(body.get('history'))
                     remote_history = conversation_history(body.get('openai_history'))
+                    center_history = conversation_history(body.get('mistral_history'))
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/x-ndjson; charset=utf-8')
                     self.send_header('Cache-Control', 'no-store')
@@ -527,7 +530,7 @@ class Handler(BaseHTTPRequestHandler):
                         self.wfile.flush()
                     try:
                         output = ask(question, mode='poe', history=history,
-                                     openai_history=remote_history, emit=emit)
+                                     openai_history=remote_history, emit=emit, mistral_history=center_history)
                         emit({'type': 'complete', 'result': output})
                     except (BrokenPipeError, ConnectionResetError):
                         pass
@@ -537,7 +540,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self.send_json(ask(question, mode='poe' if self.path == '/api/poe' else 'research',
                                    history=body.get('history') if self.path == '/api/poe' else None,
-                                   openai_history=body.get('openai_history') if self.path == '/api/poe' else None))
+                                   openai_history=body.get('openai_history') if self.path == '/api/poe' else None,
+                                   mistral_history=body.get('mistral_history') if self.path == '/api/poe' else None))
             else:
                 self.send_json({'error': 'Not found'}, 404)
         except ValueError as exc:
